@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบแดชบอร์ดเฝ้าระวังและวิเคราะห์ข้อมูลทางระบาดวิทยา</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Google Fonts (Prompt / Inter) -->
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Leaflet CSS & JS for Mapping -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Leaflet MarkerCluster -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
+
+    <!-- Leaflet Heatmap Plugin -->
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
+    <!-- ESRI Leaflet Plugin -->
+    <script src="https://unpkg.com/esri-leaflet@3.0.10/dist/esri-leaflet.js"></script>
+    
+    <!-- Chart.js for Epidemiological Visualizations -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- PapaParse for parsing CSV data -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Prompt', sans-serif;
+            background-color: #f8fafc;
+        }
+        #map {
+            height: 540px;
+            width: 100%;
+            border-radius: 0.75rem;
+            z-index: 1;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        /* Custom Pulse Marker effect for Map Pins */
+        .pin-marker-pulse {
+            position: relative;
+        }
+        .pin-marker-pulse::after {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            background-color: rgba(225, 29, 72, 0.4);
+            border-radius: 50%;
+            animation: pulse-ring 1.8s infinite;
+            z-index: -1;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 0.8; }
+            100% { transform: scale(2.2); opacity: 0; }
+        }
+    </style>
+</head>
+<body class="text-slate-800 flex flex-col min-h-screen">
+
+    <!-- Header / Navbar -->
+    <header class="bg-gradient-to-r from-teal-700 to-emerald-800 text-white shadow-lg sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div class="flex items-center space-x-3">
+                <div class="bg-white/10 p-2.5 rounded-xl backdrop-blur-md">
+                    <i class="fa-solid fa-location-crosshairs text-2xl text-teal-200"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl sm:text-2xl font-bold tracking-tight">Epidemiological Surveillance Dashboard</h1>
+                    <p class="text-xs sm:text-sm text-teal-100 font-light">แดชบอร์ดเฝ้าระวังทางระบาดวิทยา และระบบปักหมุดพิกัดจุดเกิดเหตุ</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <button id="btn-refresh" onclick="fetchData()" class="flex items-center gap-2 bg-teal-600 hover:bg-teal-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm active:scale-95">
+                    <i class="fa-solid fa-rotate-right" id="refresh-icon"></i>
+                    <span>อัปเดตข้อมูลพิกัด</span>
+                </button>
+                <div class="text-xs bg-teal-900/40 px-3 py-2 rounded-lg border border-teal-500/30 text-teal-100">
+                    <i class="fa-solid fa-circle-check text-emerald-400 mr-1"></i> Live CSV Connected
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-grow w-full space-y-6">
+
+        <!-- Notification Banner / Data Status -->
+        <div id="status-banner" class="hidden bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex justify-between items-center text-sm shadow-sm">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-triangle-exclamation text-amber-500 text-lg"></i>
+                <span id="status-message">กำลังดึงและประมวลผลพิกัดระบาดวิทยาจาก Google Sheets CSV...</span>
+            </div>
+        </div>
+
+        <!-- KPI Metrics Grid -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center space-x-4">
+                <div class="p-3.5 bg-rose-50 rounded-xl text-rose-600 text-2xl">
+                    <i class="fa-solid fa-clipboard-list"></i>
+                </div>
+                <div>
+                    <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">จำนวนเคสทั้งหมด</p>
+                    <h3 class="text-2xl font-bold text-slate-800 mt-1" id="kpi-total-cases">--</h3>
+                    <p class="text-xs text-slate-400 mt-0.5">รายงานเคสในระบบ</p>
+                </div>
+            </div>
+
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center space-x-4">
+                <div class="p-3.5 bg-emerald-50 rounded-xl text-emerald-600 text-2xl">
+                    <i class="fa-solid fa-map-pin"></i>
+                </div>
+                <div>
+                    <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">จำนวนจุดที่ปักหมุดสำเร็จ</p>
+                    <h3 class="text-2xl font-bold text-emerald-700 mt-1" id="kpi-mapped-cases">--</h3>
+                    <p class="text-xs text-emerald-600 font-medium mt-0.5" id="kpi-mapped-percent">--% มีพิกัด Acc La / Acclong</p>
+                </div>
+            </div>
+
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center space-x-4">
+                <div class="p-3.5 bg-blue-50 rounded-xl text-blue-600 text-2xl">
+                    <i class="fa-solid fa-calendar-day"></i>
+                </div>
+                <div>
+                    <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">ช่วงเวลาบันทึกข้อมูลล่าสุด</p>
+                    <h3 class="text-base font-bold text-slate-800 mt-1 truncate max-w-[160px]" id="kpi-latest-date">--</h3>
+                    <p class="text-xs text-slate-400 mt-0.5">ปรับตามอนุกรมเวลา</p>
+                </div>
+            </div>
+
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center space-x-4">
+                <div class="p-3.5 bg-purple-50 rounded-xl text-purple-600 text-2xl">
+                    <i class="fa-solid fa-fire-flame-curved"></i>
+                </div>
+                <div>
+                    <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">การวิเคราะห์กลุ่มก้อน</p>
+                    <h3 class="text-base font-bold text-purple-700 mt-1" id="kpi-density">Heatmap & Cluster</h3>
+                    <p class="text-xs text-slate-400 mt-0.5">ระบุความหนาแน่นเชิงพื้นที่</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section: Filters & Map -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Left Filter Controls & Data Overview -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between space-y-4">
+                <div>
+                    <div class="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+                        <h2 class="text-base font-semibold text-slate-800 flex items-center gap-2">
+                            <i class="fa-solid fa-filter text-teal-600"></i> ค้นหาและเลเยอร์แผนที่
+                        </h2>
+                        <button onclick="resetFilters()" class="text-xs text-teal-600 hover:underline">รีเซ็ต</button>
+                    </div>
+
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-medium text-slate-600 mb-1">ค้นหาข้อความ/สถานที่/พิกัด</label>
+                            <div class="relative">
+                                <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-slate-400 text-xs"></i>
+                                <input type="text" id="search-input" onkeyup="filterData()" placeholder="พิมพ์คำค้นหา..." class="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-medium text-slate-600 mb-1">เลือกประเภทแผนที่พื้นหลัง (ESRI Map Tile)</label>
+                            <select id="map-basemap-select" onchange="changeBasemap(this.value)" class="w-full text-sm border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-teal-500 outline-none">
+                                <option value="Topographic">ESRI World Topographic</option>
+                                <option value="Streets">ESRI Streets</option>
+                                <option value="Imagery">ESRI World Imagery (ดาวเทียม)</option>
+                                <option value="Gray">ESRI Light Gray Canvas</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-medium text-slate-600 mb-2">โหมดแสดงผลตำแหน่งบนแผนที่ (Layer Controls)</label>
+                            <div class="space-y-2 text-xs text-slate-700">
+                                <label class="flex items-center cursor-pointer">
+                                    <input type="checkbox" id="toggle-markers" checked onchange="renderMarkers()" class="rounded border-slate-300 text-rose-600 focus:ring-rose-500">
+                                    <span class="ml-2 font-medium text-rose-700 flex items-center gap-1">
+                                        <i class="fa-solid fa-location-dot text-rose-600"></i> แสดงหมุดปักพิกัดเกิดเหตุ (Location Pins)
+                                    </span>
+                                </label>
+                                <label class="flex items-center cursor-pointer">
+                                    <input type="checkbox" id="toggle-heatmap" onchange="renderMarkers()" class="rounded border-slate-300 text-rose-600 focus:ring-rose-500">
+                                    <span class="ml-2 font-medium text-amber-700 flex items-center gap-1">
+                                        <i class="fa-solid fa-fire text-amber-500"></i> แสดงแผนที่ความหนาแน่น (Heatmap Hotspot)
+                                    </span>
+                                </label>
+                                <label class="flex items-center cursor-pointer">
+                                    <input type="checkbox" id="toggle-cluster" checked onchange="renderMarkers()" class="rounded border-slate-300 text-teal-600 focus:ring-teal-500">
+                                    <span class="ml-2">รวมกลุ่มหมุดปักจุดแบบกลุ่ม (Cluster Mode)</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Incident List View Preview -->
+                <div class="pt-4 border-t border-slate-100">
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider">รายการพิกัดที่ปักหมุด (<span id="visible-count">0</span> จุด)</h3>
+                        <span class="text-[10px] text-teal-600">คลิกเพื่อซูมไปยังจุด</span>
+                    </div>
+                    <div id="incident-list" class="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                        <div class="text-xs text-slate-400 text-center py-4">กำลังโหลดพิกัด...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right ESRI Map Container -->
+            <div class="lg:col-span-2 bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 gap-2">
+                    <div>
+                        <h2 class="text-base font-semibold text-slate-800 flex items-center gap-2">
+                            <i class="fa-solid fa-map-location-dot text-rose-600"></i> แผนที่ปักหมุดพิกัดจุดเกิดเหตุ (ESRI Map - Thailand)
+                        </h2>
+                        <p class="text-xs text-slate-500">ปักหมุดจากคอลัมน์ <span class="font-semibold text-slate-700">Acc La.</span> (Latitude) และ <span class="font-semibold text-slate-700">Acclong</span> (Longitude)</p>
+                    </div>
+                    <button onclick="zoomToThailand()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-medium flex items-center gap-1 transition">
+                        <i class="fa-solid fa-expand text-slate-500"></i> โฟกัสทั่วประเทศไทย
+                    </button>
+                </div>
+                <div id="map" class="shadow-inner border border-slate-200"></div>
+            </div>
+        </div>
+
+        <!-- Section: Epidemiological Charts & Trends -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Chart 1: Epidemic Curve / Time Trend -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-base font-semibold text-slate-800 flex items-center gap-2">
+                            <i class="fa-solid fa-chart-area text-teal-600"></i> แนวโน้มการเกิดเหตุตามช่วงเวลา (Epidemic Curve)
+                        </h2>
+                        <p class="text-xs text-slate-500">วิเคราะห์การกระจายตามเวลาของเคสที่มีการปักหมุด</p>
+                    </div>
+                </div>
+                <div class="h-64 relative">
+                    <canvas id="timeSeriesChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Chart 2: Category / Spatial Breakdown -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-base font-semibold text-slate-800 flex items-center gap-2">
+                            <i class="fa-solid fa-chart-pie text-indigo-600"></i> สัดส่วนความถี่แยกตามปัจจัย/หมวดหมู่
+                        </h2>
+                        <p class="text-xs text-slate-500">สรุปความถี่ของจำแนกประเภทจุดเกิดเหตุ</p>
+                    </div>
+                </div>
+                <div class="h-64 relative">
+                    <canvas id="categoryChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Table Section -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <div class="p-5 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div>
+                    <h2 class="text-base font-semibold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-table text-slate-600"></i> ตารางรายการเคสและพิกัดภูมิศาสตร์ (Geographic Record Table)
+                    </h2>
+                    <p class="text-xs text-slate-500">ข้อมูลที่อ่านได้จากไฟล์ Google Spreadsheet CSV</p>
+                </div>
+                <span class="text-xs text-slate-500" id="table-summary-count">แสดง 0 รายการ</span>
+            </div>
+            <div class="overflow-x-auto max-h-96 custom-scrollbar">
+                <table class="w-full text-left text-xs text-slate-600">
+                    <thead class="bg-slate-50 text-slate-700 uppercase font-semibold border-b border-slate-200 sticky top-0 z-10">
+                        <tr id="table-header">
+                            <th class="py-3 px-4">#</th>
+                            <th class="py-3 px-4">พิกัด Acc La</th>
+                            <th class="py-3 px-4">พิกัด Acclong</th>
+                            <th class="py-3 px-4">สถานะการปักหมุด</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body" class="divide-y divide-slate-100">
+                        <tr>
+                            <td colspan="4" class="text-center py-6 text-slate-400">กำลังโหลดและประมวลผลพิกัด...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-slate-900 text-slate-400 text-xs py-6 mt-12 border-t border-slate-800">
+        <div class="max-w-7xl mx-auto px-4 text-center space-y-2">
+            <p>ระบบแดชบอร์ดสนับสนุนการตัดสินใจทางระบาดวิทยาและการเฝ้าระวังสุขภาพ (Public Health Surveillance System)</p>
+            <p class="text-slate-500">รองรับพิกัดจุดเกิดเหตุ Acc La / Acclong • แสดงผลบน ESRI Leaflet Maps</p>
+        </div>
+    </footer>
+
+    <!-- JavaScript Logic -->
+    <script>
+        // CSV Published URL
+        const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTsjbp_5QV7uHFAfRpILbfzoT7pZnkmqDWlRsJxpjVWD1NoV45fHsAXq2ZCP1YIPMUj3AYWnNX97-ZI/pub?output=csv';
+
+        // Global State Variables
+        let rawData = [];
+        let filteredData = [];
+        let map = null;
+        let clusterGroup = null;
+        let heatLayer = null;
+        let individualMarkersLayer = null;
+        let esriLayers = {};
+        let currentBasemap = 'Topographic';
+        let timeSeriesChart = null;
+        let categoryChart = null;
+        let markerMapStore = new Map(); // Store marker reference by item ID
+
+        // On Document Ready
+        document.addEventListener('DOMContentLoaded', () => {
+            initMap();
+            fetchData();
+        });
+
+        // Initialize Map with ESRI Basemaps
+        function initMap() {
+            // Default View Thailand Center Point (Lat: 13.736717, Long: 100.523186)
+            map = L.map('map', {
+                center: [13.736717, 100.523186],
+                zoom: 6,
+                zoomControl: true
+            });
+
+            // ESRI Base Map Layers setup
+            esriLayers = {
+                'Topographic': L.esri.basemapLayer('Topographic'),
+                'Streets': L.esri.basemapLayer('Streets'),
+                'Imagery': L.esri.basemapLayer('Imagery'),
+                'Gray': L.esri.basemapLayer('Gray')
+            };
+
+            // Add default basemap
+            esriLayers[currentBasemap].addTo(map);
+
+            // Create Layer Groups for markers
+            clusterGroup = L.markerClusterGroup({
+                chunkedLoading: true,
+                spiderfyOnMaxZoom: true,
+                showCoverageOnHover: false,
+                maxClusterRadius: 40
+            });
+            
+            individualMarkersLayer = L.layerGroup();
+
+            map.addLayer(clusterGroup);
+            map.addLayer(individualMarkersLayer);
+        }
+
+        // Switch ESRI Basemaps
+        function changeBasemap(basemapName) {
+            if (esriLayers[currentBasemap]) {
+                map.removeLayer(esriLayers[currentBasemap]);
+            }
+            if (esriLayers[basemapName]) {
+                esriLayers[basemapName].addTo(map);
+                currentBasemap = basemapName;
+            }
+        }
+
+        // Fetch Data from CSV URL
+        function fetchData() {
+            const refreshIcon = document.getElementById('refresh-icon');
+            refreshIcon.classList.add('fa-spin');
+            showStatus('กำลังโหลดพิกัดล่าสุดจาก Google Sheets CSV...', 'amber');
+
+            Papa.parse(CSV_URL, {
+                download: true,
+                header: true,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    refreshIcon.classList.remove('fa-spin');
+                    if (results.data && results.data.length > 0) {
+                        rawData = processRawData(results.data);
+                        filteredData = [...rawData];
+                        hideStatus();
+                        updateDashboard();
+                    } else {
+                        showStatus('ไม่พบข้อมูลในไฟล์ CSV หรือไฟล์ว่างเปล่า', 'red');
+                    }
+                },
+                error: function(err) {
+                    refreshIcon.classList.remove('fa-spin');
+                    showStatus('เกิดข้อผิดพลาดในการโหลด CSV: ' + err.message, 'red');
+                }
+            });
+        }
+
+        // Clean & Normalize Latitude/Longitude Columns (Acc La., Acclong)
+        function processRawData(data) {
+            return data.map((row, index) => {
+                let latVal = null;
+                let lngVal = null;
+
+                for (let key in row) {
+                    if (!key) continue;
+                    // Normalize header string by removing spaces, dots, underscores, and converting to lowercase
+                    const cleanKey = key.trim().toLowerCase().replace(/[\s\._\-]/g, '');
+                    const rawVal = row[key] ? String(row[key]).trim() : '';
+                    
+                    // Match "Acc La", "Acc La.", "Latitude", "Lat"
+                    if (cleanKey === 'accla' || cleanKey === 'lat' || cleanKey === 'latitude' || cleanKey === 'acclatitude') {
+                        const parsedLat = parseFloat(rawVal.replace(/[^0-9\.-]/g, ''));
+                        if (!isNaN(parsedLat)) latVal = parsedLat;
+                    }
+                    
+                    // Match "Acclong", "Acc Long", "Longitude", "Long", "Lng"
+                    if (cleanKey === 'acclong' || cleanKey === 'lng' || cleanKey === 'long' || cleanKey === 'longitude' || cleanKey === 'acclongitude') {
+                        const parsedLng = parseFloat(rawVal.replace(/[^0-9\.-]/g, ''));
+                        if (!isNaN(parsedLng)) lngVal = parsedLng;
+                    }
+                }
+
+                // Check Thailand Bounding Box bounds roughly (Lat: 5 - 21.5, Long: 97 - 106)
+                // If coordinates are outside Thailand or swapped, handle safely
+                let isValidGps = false;
+                if (latVal !== null && lngVal !== null) {
+                    // Check if lat/lng might be swapped
+                    if (latVal >= 97.0 && latVal <= 106.0 && lngVal >= 5.0 && lngVal <= 21.5) {
+                        const temp = latVal;
+                        latVal = lngVal;
+                        lngVal = temp;
+                    }
+                    if (latVal >= 5.0 && latVal <= 21.5 && lngVal >= 97.0 && lngVal <= 106.0) {
+                        isValidGps = true;
+                    }
+                }
+
+                return {
+                    id: index + 1,
+                    lat: isValidGps ? latVal : null,
+                    lng: isValidGps ? lngVal : null,
+                    isValidGps: isValidGps,
+                    originalRow: row
+                };
+            });
+        }
+
+        // Update All Dashboard Components
+        function updateDashboard() {
+            updateKPIs();
+            renderMarkers();
+            renderCharts();
+            renderTable();
+        }
+
+        // Render Cards KPIs
+        function updateKPIs() {
+            const total = filteredData.length;
+            const validMapped = filteredData.filter(d => d.isValidGps);
+            const mappedCount = validMapped.length;
+            const percentMapped = total > 0 ? ((mappedCount / total) * 100).toFixed(1) : 0;
+
+            document.getElementById('kpi-total-cases').innerText = total.toLocaleString();
+            document.getElementById('kpi-mapped-cases').innerText = mappedCount.toLocaleString();
+            document.getElementById('kpi-mapped-percent').innerText = `${percentMapped}% มีพิกัดพร้อมปักหมุด`;
+
+            let dateValues = [];
+            filteredData.forEach(d => {
+                for (let k in d.originalRow) {
+                    if (k.toLowerCase().includes('date') || k.toLowerCase().includes('time') || k.toLowerCase().includes('วัน')) {
+                        if (d.originalRow[k]) dateValues.push(d.originalRow[k]);
+                    }
+                }
+            });
+
+            if (dateValues.length > 0) {
+                document.getElementById('kpi-latest-date').innerText = dateValues[0];
+            } else {
+                document.getElementById('kpi-latest-date').innerText = 'ข้อมูลชุดล่าสุด';
+            }
+        }
+
+        // Render Map Pins, Cluster & Heatmap
+        function renderMarkers() {
+            // Clear existing layers & marker stores
+            clusterGroup.clearLayers();
+            individualMarkersLayer.clearLayers();
+            markerMapStore.clear();
+
+            if (heatLayer) {
+                map.removeLayer(heatLayer);
+                heatLayer = null;
+            }
+
+            const listContainer = document.getElementById('incident-list');
+            listContainer.innerHTML = '';
+
+            const showHeatmap = document.getElementById('toggle-heatmap').checked;
+            const useCluster = document.getElementById('toggle-cluster').checked;
+            const showMarkers = document.getElementById('toggle-markers').checked;
+
+            const bounds = [];
+            const heatPoints = [];
+            let plottedCount = 0;
+
+            filteredData.forEach(item => {
+                if (item.isValidGps) {
+                    plottedCount++;
+                    const latLng = [item.lat, item.lng];
+                    bounds.push(latLng);
+                    heatPoints.push([item.lat, item.lng, 0.9]); // [lat, lng, intensity]
+
+                    // Render Pins if enabled
+                    if (showMarkers) {
+                        const markerIcon = L.divIcon({
+                            className: 'custom-pin pin-marker-pulse',
+                            html: `<div class="bg-rose-600 border-2 border-white text-white rounded-full w-7 h-7 flex items-center justify-center shadow-md text-xs hover:scale-125 transition-transform">
+                                      <i class="fa-solid fa-location-dot"></i>
+                                   </div>`,
+                            iconSize: [28, 28],
+                            iconAnchor: [14, 28]
+                        });
+
+                        // Create Popup Content
+                        let popupContent = `<div class="p-2 font-sans max-w-xs">
+                            <div class="font-bold text-rose-700 border-b pb-1 mb-2 text-xs flex items-center justify-between">
+                                <span><i class="fa-solid fa-circle-exclamation mr-1"></i> พิกัดจุดเกิดเหตุ #${item.id}</span>
+                            </div>
+                            <div class="space-y-1 text-xs">
+                                <p class="bg-rose-50 text-rose-800 p-1.5 rounded border border-rose-200 font-mono">
+                                    <strong>Acc La (Lat):</strong> ${item.lat.toFixed(5)}<br>
+                                    <strong>Acclong (Lng):</strong> ${item.lng.toFixed(5)}
+                                </p>`;
+
+                        let colCount = 0;
+                        for (let key in item.originalRow) {
+                            if (colCount < 6 && item.originalRow[key]) {
+                                popupContent += `<p class="truncate"><strong>${key}:</strong> ${item.originalRow[key]}</p>`;
+                                colCount++;
+                            }
+                        }
+
+                        popupContent += `</div>
+                            <div class="mt-2 pt-1 border-t text-[10px] text-slate-400">ระบบปักหมุดระบาดวิทยา GIS</div>
+                        </div>`;
+
+                        const marker = L.marker(latLng, { icon: markerIcon }).bindPopup(popupContent);
+                        markerMapStore.set(item.id, { marker, latLng });
+
+                        if (useCluster) {
+                            clusterGroup.addLayer(marker);
+                        } else {
+                            individualMarkersLayer.addLayer(marker);
+                        }
+                    }
+
+                    // Append item to Sidebar List View
+                    const listItem = document.createElement('div');
+                    listItem.className = 'p-2.5 bg-slate-50 hover:bg-teal-50 rounded-lg border border-slate-200 cursor-pointer transition text-xs flex justify-between items-center group';
+                    listItem.innerHTML = `
+                        <div>
+                            <span class="font-semibold text-slate-700 group-hover:text-teal-700">จุดเกิดเหตุ #${item.id}</span>
+                            <span class="text-slate-500 block text-[11px] font-mono">Lat: ${item.lat.toFixed(4)}, Lng: ${item.lng.toFixed(4)}</span>
+                        </div>
+                        <i class="fa-solid fa-crosshairs text-slate-400 group-hover:text-teal-600 text-xs"></i>
+                    `;
+                    listItem.onclick = () => {
+                        flyToLocation(item.id, latLng);
+                    };
+                    listContainer.appendChild(listItem);
+                }
+            });
+
+            // Render Heatmap Layer if toggled
+            if (showHeatmap && heatPoints.length > 0) {
+                heatLayer = L.heatLayer(heatPoints, {
+                    radius: 28,
+                    blur: 18,
+                    maxZoom: 12,
+                    gradient: { 0.2: 'blue', 0.4: 'lime', 0.6: 'yellow', 1.0: 'red' }
+                }).addTo(map);
+            }
+
+            document.getElementById('visible-count').innerText = plottedCount;
+
+            // Fit Map View to markers bounds automatically
+            if (bounds.length > 0) {
+                map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+            } else {
+                zoomToThailand();
+            }
+        }
+
+        // Fly to Specific Pin Location
+        function flyToLocation(id, latLng) {
+            map.flyTo(latLng, 15, { duration: 1.2 });
+            const item = markerMapStore.get(id);
+            if (item && item.marker) {
+                setTimeout(() => {
+                    item.marker.openPopup();
+                }, 1300);
+            }
+        }
+
+        // Default Zoom Focus to Thailand Boundary
+        function zoomToThailand() {
+            map.setView([13.736717, 100.523186], 6);
+        }
+
+        // Render Epidemiological Visual Charts
+        function renderCharts() {
+            const keys = rawData.length > 0 ? Object.keys(rawData[0].originalRow) : [];
+            
+            let dateKey = keys.find(k => k.toLowerCase().includes('date') || k.toLowerCase().includes('day') || k.toLowerCase().includes('วัน') || k.toLowerCase().includes('time')) || keys[0];
+            let categoryKey = keys.find(k => k.toLowerCase().includes('type') || k.toLowerCase().includes('cause') || k.toLowerCase().includes('โรค') || k.toLowerCase().includes('เหตุ') || k.toLowerCase().includes('province') || k.toLowerCase().includes('amp')) || keys[1] || keys[0];
+
+            const timeCounts = {};
+            filteredData.forEach(d => {
+                const val = d.originalRow[dateKey] || 'ไม่ระบุวัน/เวลา';
+                timeCounts[val] = (timeCounts[val] || 0) + 1;
+            });
+
+            const timeLabels = Object.keys(timeCounts).slice(0, 15);
+            const timeData = timeLabels.map(l => timeCounts[l]);
+
+            const catCounts = {};
+            filteredData.forEach(d => {
+                const val = d.originalRow[categoryKey] || 'อื่น ๆ / ไม่ระบุ';
+                catCounts[val] = (catCounts[val] || 0) + 1;
+            });
+
+            const catLabels = Object.keys(catCounts).slice(0, 8);
+            const catData = catLabels.map(l => catCounts[l]);
+
+            // 1. Time Series Line Chart
+            const ctxTime = document.getElementById('timeSeriesChart').getContext('2d');
+            if (timeSeriesChart) timeSeriesChart.destroy();
+
+            timeSeriesChart = new Chart(ctxTime, {
+                type: 'line',
+                data: {
+                    labels: timeLabels,
+                    datasets: [{
+                        label: `จำนวนเคสตามช่วงเวลา (${dateKey})`,
+                        data: timeData,
+                        borderColor: '#0d9488',
+                        backgroundColor: 'rgba(13, 148, 136, 0.12)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3,
+                        pointBackgroundColor: '#0f766e',
+                        pointRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: true, position: 'top' }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, ticks: { precision: 0 } }
+                    }
+                }
+            });
+
+            // 2. Category Bar Chart
+            const ctxCat = document.getElementById('categoryChart').getContext('2d');
+            if (categoryChart) categoryChart.destroy();
+
+            categoryChart = new Chart(ctxCat, {
+                type: 'bar',
+                data: {
+                    labels: catLabels,
+                    datasets: [{
+                        label: `จำนวนจำแนกตาม ${categoryKey}`,
+                        data: catData,
+                        backgroundColor: [
+                            'rgba(244, 63, 94, 0.85)',
+                            'rgba(14, 165, 233, 0.85)',
+                            'rgba(168, 85, 247, 0.85)',
+                            'rgba(245, 158, 11, 0.85)',
+                            'rgba(16, 185, 129, 0.85)'
+                        ],
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, ticks: { precision: 0 } }
+                    }
+                }
+            });
+        }
+
+        // Render Data Table
+        function renderTable() {
+            const tbody = document.getElementById('table-body');
+            const theadTr = document.getElementById('table-header');
+            tbody.innerHTML = '';
+
+            if (filteredData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="10" class="text-center py-6 text-slate-400">ไม่พบข้อมูลที่ค้นหา</td></tr>';
+                document.getElementById('table-summary-count').innerText = 'แสดง 0 รายการ';
+                return;
+            }
+
+            const sampleRow = filteredData[0].originalRow;
+            const keys = Object.keys(sampleRow);
+            
+            let headerHTML = `<th class="py-3 px-4"># ID</th>`;
+            headerHTML += `<th class="py-3 px-4 text-rose-700">Acc La (Lat)</th>`;
+            headerHTML += `<th class="py-3 px-4 text-rose-700">Acclong (Lng)</th>`;
+            headerHTML += `<th class="py-3 px-4">สถานะการปักหมุด</th>`;
+            
+            keys.forEach(k => {
+                headerHTML += `<th class="py-3 px-4">${k}</th>`;
+            });
+            theadTr.innerHTML = headerHTML;
+
+            const displayData = filteredData.slice(0, 100);
+            displayData.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-teal-50/50 transition border-b border-slate-100 cursor-pointer';
+                if (item.isValidGps) {
+                    tr.onclick = () => flyToLocation(item.id, [item.lat, item.lng]);
+                }
+
+                let rowHTML = `<td class="py-2.5 px-4 font-semibold text-teal-700">#${item.id}</td>`;
+                rowHTML += `<td class="py-2.5 px-4 ${item.lat ? 'text-slate-800 font-mono font-medium' : 'text-slate-300'}">${item.lat !== null ? item.lat : 'N/A'}</td>`;
+                rowHTML += `<td class="py-2.5 px-4 ${item.lng ? 'text-slate-800 font-mono font-medium' : 'text-slate-300'}">${item.lng !== null ? item.lng : 'N/A'}</td>`;
+                
+                if (item.isValidGps) {
+                    rowHTML += `<td class="py-2.5 px-4"><span class="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded-full font-medium"><i class="fa-solid fa-check mr-0.5"></i> ปักหมุดแล้ว</span></td>`;
+                } else {
+                    rowHTML += `<td class="py-2.5 px-4"><span class="bg-slate-100 text-slate-500 text-[10px] px-2 py-0.5 rounded-full font-medium">ไม่มีพิกัด</span></td>`;
+                }
+
+                keys.forEach(k => {
+                    rowHTML += `<td class="py-2.5 px-4 whitespace-nowrap">${item.originalRow[k] || '-'}</td>`;
+                });
+
+                tr.innerHTML = rowHTML;
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('table-summary-count').innerText = `แสดง ${displayData.length} จากทั้งหมด ${filteredData.length} รายการ`;
+        }
+
+        // Search / Filter Data Function
+        function filterData() {
+            const query = document.getElementById('search-input').value.toLowerCase().trim();
+
+            if (!query) {
+                filteredData = [...rawData];
+            } else {
+                filteredData = rawData.filter(item => {
+                    return Object.values(item.originalRow).some(val => 
+                        String(val).toLowerCase().includes(query)
+                    ) || (item.lat && String(item.lat).includes(query)) || (item.lng && String(item.lng).includes(query));
+                });
+            }
+
+            updateDashboard();
+        }
+
+        // Reset Filters
+        function resetFilters() {
+            document.getElementById('search-input').value = '';
+            filteredData = [...rawData];
+            updateDashboard();
+        }
+
+        // Helper UI Status Message
+        function showStatus(msg, color) {
+            const banner = document.getElementById('status-banner');
+            const msgEl = document.getElementById('status-message');
+            banner.classList.remove('hidden');
+            msgEl.innerText = msg;
+        }
+
+        function hideStatus() {
+            document.getElementById('status-banner').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
